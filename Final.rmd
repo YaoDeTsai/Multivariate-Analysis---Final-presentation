@@ -1,0 +1,644 @@
+```{r}
+library(corrplot) 
+library(stringr)
+library(stats)
+library(pca3d)
+library(ggfortify)
+library(ca)
+library(tidyverse)
+library(dplyr)
+library(GGally)
+library(e1071)
+library(ca)
+library(xgboost)
+library(mlr)
+
+
+```
+
+```{r}
+2*(sqrt(2)-1)
+
+n=10000000
+
+temp = 0
+for(i in 1:n){
+  temp =temp +  1/sqrt(n *(n+i))
+}
+print(temp)
+
+temp*10^9
+
+```
+```{r}
+x_list=NULL;x_mean=NULL
+for(k in 1:1000){
+for(i in 1:100){
+X <- rnorm(100*k)
+x_list<- c(x_list,min(X))
+}
+x_mean <- c(x_mean, mean(x_list))
+}
+plot(x_mean,xlab=100*(1:1000))
+
+
+```
+
+
+```{r}
+# Data preprocessing
+
+setwd("C:/Users/TYDer/OneDrive/桌面/多變量分析/Multivariate-Analysis---Final-presentation")
+
+data<-read.csv("songs_normalize.csv",header = T)
+list_genre <- strsplit(data$genre,",")
+genre <- matrix(NA,2000,4)
+for(i in 1:2000){for(j in 1:4){genre[i,j]<-list_genre[[i]][j]}}
+genre <- noquote(genre)
+genre <- gsub(" ", "",genre)
+
+genre[ !(genre[,1] %in% c("pop","rock","hiphop","Dance/Electronic")),1] = "Other"
+
+indice1 = which( (genre[,1] %in% "hiphop") | (genre[,2] %in% "hiphop") | (genre[,3] %in% "hiphop") )
+genre[ indice1 ,1] = "hiphop"
+
+indice3 = which( (genre[,1] %in% "rock") | (genre[,2] %in% "rock") | (genre[,3] %in% "rock") )
+genre[ indice3 ,1] = "rock"
+
+indice2 = which( (genre[,1] %in% "R&B") | (genre[,2] %in% "R&B") | (genre[,3] %in% "R&B") )
+genre[ indice2 ,1] = "R&B"
+
+indice4 = which( (genre[,1] %in% "Dance/Electronic") | (genre[,2] %in% "Dance/Electronic") | (genre[,3] %in% "Dance/Electronic") )
+genre[ indice4 ,1] = "EDM"
+
+
+table(genre[,1])
+data$genre = genre[,1]
+
+data = data[!(data$genre %in% c("Other" ) ),]
+```
+
+```{r}
+#Transformation
+data$explicit[data$explicit=="False"]<-0 ; data$explicit[data$explicit=="True"]<-1
+for(i in 1:nrow(data)){
+    if(data$instrumentalness[i] == 0){
+      data$instrumentalness[i]=0
+      }else if(data$instrumentalness[i] < 0.5 && data$instrumentalness[i] > 0){
+          data$instrumentalness[i]=1
+          }else{data$instrumentalness[i]=2}
+}
+
+data_trans = data 
+
+data_trans$speechiness = log(data$speechiness)
+data_trans$acousticness = (data$acousticness)^0.2
+data_trans$liveness = log(data$liveness)
+data_trans$tempo = (data$tempo)^0.1
+
+
+```
+
+```{r}
+data <- data %>% relocate(genre, .after = count_year)
+colnames(data)[18] <- "song_gen" 
+```
+
+```{r}
+# Outliers detection and elimination
+
+data2<-data_trans[-c(1,2)]
+data2[,ncol(data2)+1]<-matrix(1:nrow(data2),nrow(data2))
+
+outlier<-function(x,b){
+  outliers <- matrix(NA,nrow(x),12)
+  for(i in c(4,5,6,7,8,10,11,12,13,14,15)){
+  IQR_i = IQR(x[,i])
+  not_outlier_range = c(quantile(x[,i])[2] -1.5*IQR_i , quantile(x[,i])[4]-1.5*IQR_i +1.5*IQR_i)
+  index<-which( (x[,i]<not_outlier_range[1] ) | (x[,i]>not_outlier_range[2]) )
+  outliers[index,i-3] = data2[index,i]}
+  location_outliers <- matrix(NA,nrow(outliers),1)
+  for(i in 1:nrow(outliers)){
+  location_outliers[i]<-ncol(outliers)-sum(is.na(outliers[i,]))>=b
+  }
+  
+  c<-x[which(location_outliers==TRUE),ncol(data2)]
+  return(as.numeric(c))
+}
+str(data)
+data_EDM<-data2[data$genre=="EDM",]
+data_hiphop<-data2[data$genre=="hiphop",]
+data_pop<-data2[data$genre=="pop",]
+data_RnB<-data2[data$genre=="R&B",]
+data_rock<-data2[data$genre=="rock",]
+
+# 超過七項為都是outlier的資料去除
+scale_out<-sort(c(outlier(data_EDM,6), outlier(data_hiphop,6),outlier(data_pop,6),outlier(data_RnB,6),outlier(data_rock,6)),decreasing = F)
+out<-sort(c(outlier(data_EDM,6), outlier(data_hiphop,6),outlier(data_pop,6),outlier(data_RnB,6),outlier(data_rock,6)),decreasing = F)
+data_outlier<-data_trans[-out,]
+
+```
+
+```{r}
+#PCA Scree Plot
+cor(data[,-c(1,2,4,5,11,14,18,20)])
+data_pca <- data[,-c(1,2,4,5,11,14,18,20)]
+pca <- prcomp(data_pca,scale = TRUE)
+
+summary(pca)
+
+plot(pca , type="line")
+abline(h=1, col="blue")
+
+vars <- (pca$sdev)^2 
+props <- vars / sum(vars)    
+cumulative.props <- cumsum(props)
+plot(cumulative.props)
+
+#PCA Scree Plot for new data
+newdata_pca <- newdata[,-c(1,2,3,4,5,11,18)]
+newpca <- prcomp(newdata_pca,scale = TRUE)
+summary(newpca)
+
+plot(newpca , type="line")
+abline(h=1, col="blue")
+
+newvars <- (newpca$sdev)^2 
+newprops <- newvars / sum(newvars)    
+newcumulative.props <- cumsum(newprops)
+plot(newcumulative.props)
+
+
+data_pca = data[,-c(1,2,3,4,5,11)]
+data_pca2 = data_pca[,-12]
+pca_res <- prcomp(data_pca2, scale = TRUE)
+autoplot(pca_res)
+data_pca$genre = factor(data_pca$genre)
+autoplot(pca_res, data=data_pca, colour = 'genre',cex=0.1,loadings = TRUE, loadings.colour = 'blue', loadings.label = TRUE, loadings.label.size = 3)
+gr <- factor(data_pca[,12])
+pca3d(pca_res,group=gr, legend="topleft")
+
+
+newdata_pca = newdata[,-c(1,2,3,4,5,11)]
+newdata_pca2 = newdata_pca[,-12]
+newpca_res <- prcomp(newdata_pca2, scale = TRUE)
+autoplot(newpca_res)
+newdata_pca$genre = factor(newdata_pca$genre)
+autoplot(newpca_res, data=newdata_pca, colour = 'genre',cex=0.1,loadings = TRUE, loadings.colour = 'blue', loadings.label = TRUE, loadings.label.size = 3)
+newgr <- factor(newdata_pca[,12])
+pca3d(newpca_res,group=newgr, legend="topleft")
+
+```
+
+
+```{r}
+#Barchart
+bar_year<-barplot(table(data$year))
+bar_year
+
+#Boxchart
+
+for(i in 3:15){
+A<-ggplot(data, aes(group=genre ,x=as.factor(genre) ,y =as.numeric(unlist(data[i]))))+
+geom_boxplot()+
+xlab("Genre")+ylab(colnames(data)[i])+
+labs(title=colnames(data)[i])+theme(plot.title=element_text(hjust = 0.5,face="bold",size=15))+
+scale_fill_brewer(palette="Dark2")
+print(A)
+}
+
+```
+
+
+
+```{r}
+#PCA
+library(ggfortify)
+data_pca2 = data[,-c(1,2,3,9,16)]
+pca_res <- prcomp(data_pca2, scale. = TRUE)
+
+autoplot(pca_res)
+data_pca$genre = factor(data_pca$genre)
+autoplot(pca_res, data=data_pca, colour = 'genre')
+table(b)
+#PCA for new data(outliers removed)
+
+```
+
+
+
+```{r}
+#Split Data
+
+train_test <- function(data, per_train){
+  data_sub = data[,c(-1,-2)]
+  n <- nrow(data_sub)
+
+  #取出樣本數的idx
+  t_idx <- sample(seq_len(n), size = round(per_train * n))
+
+  #訓練資料與測試資料比例: 70%建模，30%驗證
+  train <- data_sub[t_idx,]
+  test <- data_sub[-t_idx,]
+  return( list(train,test) )
+}
+
+```
+
+```{r}
+#SVM
+
+data_SVM = data_outlier
+data_SVM$explicit[data_SVM$explicit=="False"]<-0 ; data_SVM$explicit[data_SVM$explicit=="True"]<-1 #Explicit轉為0,1
+data_SVM$genre<-as.factor(data_SVM$genre)
+#Linear_SVM
+SVM_Data_L<-function(data,k,a){
+  runtime = c()
+  acc = c()
+  for(i in 1:k){
+  ptm <- proc.time()
+  
+  train = train_test(data_SVM,0.7)[[1]]
+  test = train_test(data_SVM,0.7)[[2]]
+  
+  s<-svm(genre~., data =train , cost =100,kernel = "linear")
+  #s <-svm(genre~., data =train , cost =100,kernel = "linear",scale=TRUE)
+  #summary(S)
+  #A<-summary(search)
+  #C<-A$best.parameters[1,1]
+  #Gamma<-A$best.parameters[1,2]
+  #s<-svm(train[,1:ncol(train)-1],y,cost=C,gamma=Gamma)
+  
+  pred<-predict(s,test[,1:(ncol(test)-1)])
+  
+  c<-sum(diag(table(pred,test$genre)))/nrow(test)
+  temp = proc.time() - ptm
+  runtime[i] = temp[1]
+  acc[i]<-c
+  }
+  M<-cbind(acc,runtime)
+  return(M)
+}
+SVM<-SVM_Data_L(data_SVM,10,1)
+mean(SVM)
+
+
+# write.csv(SVM1,"C:/Users/TYDer/OneDrive/桌面/多變量期末/SVM_gaussian.csv")
+Mean_SVM<-mean(SVM[,1])
+Var_SVM<-var(SVM[,1])
+Running_time<-mean(SVM[,2])
+cat(" Average accuracy:",round(Mean_SVM,5),"\n","Variance accuracy:",round(var(SVM1[,1]),5),"\n","Average runtime:",round(Running_time,5))
+
+
+#data<-data_SVM
+#k<-2
+SVM_Data<-function(data,k){
+  runtime = c()
+  acc = c()
+  COST =c()
+  GAMMA=c()
+  for(i in 1:k){
+  ptm <- proc.time()
+  
+  train = train_test(data_SVM,0.7)[[1]]
+  test = train_test(data_SVM,0.7)[[2]]
+  
+  search <- tune(svm, genre ~ ., data=train, ranges=list(cost= 100*(1:10), gamma=0.1*(1:10)))
+  A<-summary(search)
+  C<-A$best.parameters[1,1]
+  Gamma<-A$best.parameters[1,2]
+  
+  y<-as.factor(train$genre)
+  s<-svm(train[,1:ncol(train)-1],y,cost=C,gamma=Gamma)
+  pred<-predict(s,test[,1:(ncol(test)-1)])
+  
+  c<-sum(diag(table(pred,test$genre)))/nrow(test)
+  temp = proc.time() - ptm
+  runtime[i] = temp[1]
+  acc[i]<-c
+  COST[i]<-C
+  GAMMA[i]<-Gamma
+  }
+  M<-cbind(acc,runtime,COST,GAMMA)
+  return(M)
+}
+SVM1<-SVM_Data(data_SVM,3)
+SVM1
+
+
+Sample<-sample(nrow(data_SVM), size = 50)
+Sample_data<-data_SVM[Sample,-c(1,2)]
+c1<-svm(factor(genre)~.,data=train,cost=100,gamma=0.2,kernel="radial")
+
+pred<-predict(c1,Sample_data)
+y<-as.factor(Sample_data$genre)
+table(pred,y)
+length(pred)
+
+SVM_Data
+#write.csv(SVM1,"C:/Users/TYDer/OneDrive/桌面/多變量期末/SVM_gaussian.csv")
+Mean_SVM<-mean(SVM1[,1])
+Var_SVM<-var(SVM1[,1])
+Running_time<-mean(SVM1[,2])
+cat(" Average accuracy:",round(Mean_SVM,5),"\n","Variance accuracy:",round(var(SVM1[,1]),5),"\n","Average runtime:",round(Running_time,5))
+
+SVM_polynomial<-function(data,k,n,coef){
+runtime = matrix(NA,k,coef)
+accuracy = matrix(NA,k,coef)
+Coef = matrix(NA,k,coef)
+for(j in 1:coef){
+for(i in 1:k){
+  ptm <- proc.time()
+  train = train_test(data,0.7)[[1]]
+  test = train_test(data,0.7)[[2]]
+  
+  x<-train[,1:15]
+  y<-as.factor(train$genre)
+  s<- svm(x,y,kernel="polynomial",degree=n,coef0 =j,cross = 10)
+  pred<-predict(s,test[,1:(ncol(test)-1)])
+  c<-sum(diag(table(pred,test$genre)))/nrow(test)
+  c
+  temp<-proc.time() - ptm
+  runtime[i,j] <- temp[1]
+  accuracy[i,j]<-c
+  Coef[i,j]<-j
+  
+  }
+}
+
+degree<-rep(n,coef*k)
+Accuracy<-as.numeric(accuracy)
+Runtime<-as.numeric(runtime)
+Coef<-as.numeric(Coef)
+#coef0=sort(c(rep(1:j,i)))
+  M<-cbind(degree,Accuracy,Runtime,Coef)
+    return(M)
+}
+SVM2_2<-SVM_polynomial(data_SVM,10,2,5)
+SVM2_3<-SVM_polynomial(data_SVM,10,3,5)
+SVM2_4<-SVM_polynomial(data_SVM,10,4,5)
+SVM2_5<-SVM_polynomial(data_SVM,10,5,5)
+
+x<-10
+for(i in 1:5){mean(SVM2_2[(x*(i-1)+1):(x*i),2]);print(mean(SVM2_2[(x*(i-1)+1):(x*i),2]))}
+for(i in 1:5){mean(SVM2_3[(x*(i-1)+1):(x*i),2]);print(mean(SVM2_3[(x*(i-1)+1):(x*i),2]))}
+for(i in 1:5){mean(SVM2_4[(x*(i-1)+1):(x*i),2]);print(mean(SVM2_4[(x*(i-1)+1):(x*i),2]))}
+for(i in 1:5){mean(SVM2_5[(x*(i-1)+1):(x*i),2]);print(mean(SVM2_5[(x*(i-1)+1):(x*i),2]))}
+
+
+
+
+
+mean(SVM2_4[1:100,2])
+mean(SVM2_4[1:100,3])
+cat(" Average accuracy:",round(mean(SVM2_4[1:10,2]),5),"\n","Variance accuracy:",round(var(SVM2_4[1:10,2]),5),"\n","Averageruntime:",round(sum(SVM2_2[,3]+SVM2_3[,3]+SVM2_4[,3]+SVM2_5[,3])/x,5))
+
+write.csv(SVM2_2,"C:/Users/TYDer/OneDrive/桌面/多變量期末/SVM_polynomial2.csv")
+write.csv(SVM2_3,"C:/Users/TYDer/OneDrive/桌面/多變量期末/SVM_polynomial3.csv")
+write.csv(SVM2_4,"C:/Users/TYDer/OneDrive/桌面/多變量期末/SVM_polynomial4.csv")
+write.csv(SVM2_5,"C:/Users/TYDer/OneDrive/桌面/多變量期末/SVM_polynomial5.csv")
+
+sum(SVM2_2[,3]+SVM2_3[,3]+SVM2_4[,3]+SVM2_5[,3])/10
+accuracy = matrix(1:50,5,10)
+as.numeric(accuracy)
+c()
+mean(SVM2_2[,1])
+mean(SVM2_3[,1])
+mean(SVM2_4[,1])
+mean(SVM2_5[,1])
+mean(SVM2_6[,1])
+
+Mean_SVM2<-mean(SVM2_3[,1])
+Var_SVM2<-var(SVM2_3[,1])
+Running_time2<-mean(SVM2_3[,2])
+Running_time2
+Mean_SVM2
+var(SVM2_3[,2])
+
+A<-rbind(Mean_SVM2,var(SVM2_3[,2]))
+cat(" Average accuracy:",round(Mean_SVM,5),"\n","Variance accuracy:",round(var(SVM1[,1]),5),"\n","Average runtime:",round(sum(SVM2_2[,3]+SVM2_3[,3]+SVM2_4[,3]+SVM2_5[,3])/x,5))
+A
+write.csv(SVM2_3,"C:/Users/TYDer/OneDrive/桌面/多變量期末/SVM_polynomial3.csv")
+write.csv(SVM2_4,"C:/Users/TYDer/OneDrive/桌面/多變量期末/SVM_polynomial4.csv")
+write.csv(SVM2_5,"C:/Users/TYDer/OneDrive/桌面/多變量期末/SVM_polynomial5.csv")
+
+x<-train[,1:15]
+  y<-as.factor(train$genre)
+  s<- svm(x,y,kernel="polynomial",degree=4,coef0 =1)
+  pred<-predict(s,test[,1:(ncol(test)-1)])
+  c<-sum(diag(table(pred,test$genre)))/nrow(test)
+  c
+
+```
+
+```{r}
+#LINEAR
+SVM_L<-function(data,k,coef){
+runtime = matrix(NA,k,coef)
+accuracy = matrix(NA,k,coef)
+Coef = matrix(NA,k,coef)
+for(j in 1:coef){
+for(i in 1:k){
+  ptm <- proc.time()
+  train = train_test(data,0.7)[[1]]
+  test = train_test(data,0.7)[[2]]
+  
+  x<-train[,1:15]
+  y<-as.factor(train$genre)
+  s<- svm(x,y,kernel="linear",coef0 =100*j,cross = 10)
+  pred<-predict(s,test[,1:(ncol(test)-1)])
+  c<-sum(diag(table(pred,test$genre)))/nrow(test)
+  c
+  temp<-proc.time() - ptm
+  runtime[i,j] <- temp[1]
+  accuracy[i,j]<-c
+  Coef[i,j]<-j*100
+  
+  }
+}
+
+
+Accuracy<-as.numeric(accuracy)
+Runtime<-as.numeric(runtime)
+Coef<-as.numeric(Coef)
+#coef0=sort(c(rep(1:j,i)))
+  M<-cbind(Accuracy,Runtime,Coef)
+    return(M)
+}
+x<-50
+SVM_L1<-SVM_L(data_SVM,x,5)
+
+sum(SVM_L1[,2]/10)
+for(i in 1:5){mean(SVM_L1[(x*(i-1)+1):(x*i),1]);print(mean(SVM_L1[(x*(i-1)+1):(x*i),1]))}
+i=4
+SVM_300<-SVM_L1[(x*(i-1)+1):(x*i),1]
+
+write.csv(SVM_L1,"C:/Users/TYDer/OneDrive/桌面/多變量期末/SVM_Linear300.csv")
+cat(" Average accuracy:",round(mean(SVM_300),5),"\n","Variance accuracy:",round(var(SVM_300),5),"\n","Average runtime:",round(sum(SVM_L1[,2]),5))
+```
+
+
+```{r}
+xgboost= function(){
+
+
+  data_xgb = data
+  data_xgb$genre = unclass(as.factor(data_xgb$genre))
+  res = train_test(data_xgb,0.7)
+  train = res[[1]]
+  test = res[[2]]
+
+  traintask <- makeClassifTask(data = train,target = "genre")
+  testtask <- makeClassifTask(data = test,target = "genre")
+
+  lrn <- makeLearner("classif.xgboost",predict.type = "response")
+  lrn$par.vals <- list(objective = "multi:softmax", nrounds=100L, eta = 0.01,
+  nestimators = 1000, multilabel =TRUE, num_classes = 5)
+
+  params <- makeParamSet( makeDiscreteParam("booster",
+                          values = c(values = c("gbtree","gblinear"))),
+                          makeIntegerParam("max_depth",lower = 3L,upper = 10L), 
+                          makeNumericParam("min_child_weight",lower = 1L,upper = 10L),
+                          makeNumericParam("subsample",lower = 0.5,upper = 1),
+                          makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+
+  rdesc <- makeResampleDesc("CV",stratify = T,iters=5L)
+  ctrl <- makeTuneControlRandom(maxit = 10L)
+
+  mytune <- tuneParams(learner = lrn, task = traintask, resampling = rdesc, measures = acc, 
+                       par.set = params, control = ctrl, show.info = T)
+
+  mytune$y
+  #set hyperparameters
+  lrn_tune <- setHyperPars(lrn,par.vals = mytune$x)
+
+  #train model
+  xgmodel <- train(learner = lrn_tune,task = traintask)
+
+  #predict model
+  xgpred <- predict(xgmodel,testtask)
+
+  return(sum(xgpred$data$response==xgpred$data$truth)/ nrow(test) )
+}
+
+runtime = c()
+acc = c()
+
+for(i in 1:2){
+    ptm <- proc.time()
+    #模型放這
+    accuracy= xgboost()
+
+    temp = proc.time() - ptm
+    runtime[i] = temp[1]
+    print(i)
+    print(runtime[i])
+}
+
+```
+
+
+```{R}
+#PLOTNOMIAL
+SVM_Data<-function(data,k){
+  runtime = c()
+  acc = c()
+  COST =c()
+  GAMMA=c()
+  for(i in 1:k){
+  ptm <- proc.time()
+  
+  train = train_test(data_SVM,0.7)[[1]]
+  test = train_test(data_SVM,0.7)[[2]]
+  train$explicit<-train$explicit*1
+  search <- tune.svm(x=train$year,y=train$genre , data=train,kerner="polynomial",cost=1:10,degree=2:5)
+  A<-summary(search)
+  C<-A$best.parameters[1,1]
+  Gamma<-A$best.parameters[1,2]
+  
+  y<-as.factor(train$genre)
+  s<-svm(train[,1:ncol(train)-1],y,cost=C,gamma=Gamma)
+  pred<-predict(s,test[,1:(ncol(test)-1)])
+  
+  c<-sum(diag(table(pred,test$genre)))/nrow(test)
+  temp = proc.time() - ptm
+  runtime[i] = temp[1]
+  acc[i]<-c
+  COST[i]<-C
+  GAMMA[i]<-Gamma
+  }
+  M<-cbind(acc,runtime,COST,GAMMA)
+  return(M)
+}
+SVM1<-SVM_Data(data_SVM,10)
+SVM1
+?svm
+
+```
+
+
+```{r}
+# svm
+
+runtime = c()
+acc = c()
+nrow = nrow(data_sub)
+for(i in 1:1000){
+    ptm <- proc.time()
+    t_idx = sample(seq_len(nrow), size = round(0.7 * nrow))
+    train = data_sub[t_idx,]
+    test = data_sub[-t_idx,]
+
+    #模型放這
+    
+    train_rf = randomForest(genre ~ ., data=train, mtry=2, ntree=4000)
+
+    acc[i] = 1-mean(train_rf$err.rate)
+    print(acc[i])
+    temp = proc.time() - ptm
+    runtime[i] = temp[1]
+    print(runtime[i])
+}
+print(acc)
+print(runtime)
+```
+
+
+```{R}
+library("sail")
+library("caret")
+  data.frame(typeof(train.set)[[1]][1:16])
+  train.set = train_test(data,0.7)[[1]]
+  train.set=(data.frame(train.set[,c(1:16)]))
+  test = train_test(data,0.7)[[2]]
+  test=(data.frame(test[,c(1:16)]))
+folds <- createFolds(y=factor(train.set[,16]), k = 10,list=F)
+train.set$fold <- folds
+
+costs<-seq(exp(-5), exp(20), length.out = 20 )
+degrees<-c(1:5)
+    
+    matrix.errors<-matrix(NA, nrow = length(costs), ncol = length(degrees))
+    for(j in 1:length(costs)){
+      for(l in 1:length(degrees)){
+        
+         CV.error<-NULL 
+    for (i in 1:10) { 
+    valid.data <- subset(train.set, fold == i)
+    train.data <- subset(train.set, fold != i) 
+    colnames(train.data)
+    str(train.data)
+    class(x)
+    svmfit<-svm(as.factor(genre)~duration_ms+train.data$explicit+year+popularity+danceability+energy+key+loudness+mode+speechiness+acousticness+acousticness+instrumentalness+liveness+valence+tempo, data = train.data, kernel="polynomial", cost=costs[j], degree=degrees[l], gamma=1)
+    svm.y<-valid.data$genre
+    svm.predy<-predict(svmfit, valid.data)
+    
+    ith.test.error<- mean(svm.y!=svm.predy) 
+    CV.error<-c(CV.error,(nrow(valid.data)/nrow(train.set))*ith.test.error)  
+  }
+  
+  matrix.errors[j, l]<-sum(CV.error)
+        
+      }
+    }
+```
